@@ -1,11 +1,9 @@
-// src/components/FileUpload/FileItem.js
 import React, { useState, useEffect } from 'react';
 
 const FileItem = ({ file, isSelected }) => {
   const [thumbnail, setThumbnail] = useState(null);
   
   useEffect(() => {
-    // Create thumbnails for image files
     if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -15,7 +13,6 @@ const FileItem = ({ file, isSelected }) => {
     }
   }, [file]);
 
-  // Determine file type for icon selection
   const getFileIcon = () => {
     if (file.type.startsWith('image/')) {
       return thumbnail ? (
@@ -57,7 +54,6 @@ const FileItem = ({ file, isSelected }) => {
         </svg>
       );
     } else {
-      // Default file icon
       return (
         <svg className="w-10 h-10 text-gray-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M14 3v4a1 1 0 001 1h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>

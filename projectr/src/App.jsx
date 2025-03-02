@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import FileUpload from '../components/FileUpload';
-import Preview from '../components/Preview';
-import useFileHandling from '../components/hooks/UseFileHandling';
+import FileUpload from './components/FileUpload';
+import Preview from './components/Preview';
+import useFileHandling from './components/hooks/UseFileHandling';
 import logo from './components/logo.png';
 
 const App = () => {
