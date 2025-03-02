@@ -1,0 +1,862 @@
+import React, { useState, useEffect, useRef } from 'react';
+
+const App = () => {
+  // File state
+  const [selectedFile, setSelectedFile] = useState({
+    name: "No File Selected",
+    preview: "/api/placeholder/400/320",
+    isPdf: false,
+    isWord: false,
+    isExcel: false,
+    isPpt: false,
+    fileType: null
+  });
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
+
+  const [numPages, setNumPages] = useState(null);
+  const [pageNumber, setPageNumber] = useState(1);
+  const [pdfError, setPdfError] = useState(false);
+  const [pdfThumbnails, setPdfThumbnails] = useState({});
+  const [wordContent, setWordContent] = useState(null);
+  const [excelContent, setExcelContent] = useState(null);
+  
+  const canvasRef = useRef(null);
+  const pdfDocRef = useRef(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    // Load PDF.js script dynamically
+    const pdfScript = document.createElement('script');
+    pdfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    pdfScript.async = true;
+    pdfScript.onload = () => {
+      // PDF.js is now loaded, configure worker
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      
+      // If there's a PDF selected, render it
+      if (selectedFile.isPdf && selectedFile.file) {
+        renderPdf(selectedFile.file);
+      }
+      
+      // Generate thumbnails for any existing PDF files
+      selectedFiles.forEach((file, index) => {
+        if (file.isPdf && file.file && !pdfThumbnails[index]) {
+          generatePdfThumbnail(file.file, index);
+        }
+      });
+    };
+    document.body.appendChild(pdfScript);
+  
+    // Load mammoth.js for Word document processing
+    const mammothScript = document.createElement('script');
+    mammothScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+    mammothScript.async = true;
+    document.body.appendChild(mammothScript);
+    
+    // Load SheetJS for Excel processing
+    const sheetjsScript = document.createElement('script');
+    sheetjsScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sheetjsScript.async = true;
+    document.body.appendChild(sheetjsScript);
+  
+    return () => {
+      document.body.removeChild(pdfScript);
+      if (document.body.contains(mammothScript)) {
+        document.body.removeChild(mammothScript);
+      }
+      if (document.body.contains(sheetjsScript)) {
+        document.body.removeChild(sheetjsScript);
+      }
+    };
+  }, []);
+  
+  // Re-render PDF when selected file changes
+  useEffect(() => {
+    if (selectedFile.isPdf && selectedFile.file && window.pdfjsLib) {
+      renderPdf(selectedFile.file);
+    }
+  }, [selectedFile, pageNumber]);
+
+  const renderPdf = async (file) => {
+    try {
+      const fileReader = new FileReader();
+      
+      fileReader.onload = async function() {
+        try {
+          // Load the PDF document
+          const typedArray = new Uint8Array(this.result);
+          const loadingTask = window.pdfjsLib.getDocument(typedArray);
+          
+          const pdfDoc = await loadingTask.promise;
+          pdfDocRef.current = pdfDoc;
+          setNumPages(pdfDoc.numPages);
+          
+          // Render the page
+          const page = await pdfDoc.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1.0 });
+          
+          // Prepare canvas for rendering
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          
+          const context = canvas.getContext('2d');
+          
+          // Scale to fit within preview area while maintaining aspect ratio
+          const maxWidth = 600;
+          const maxHeight = 500;
+          
+          // Calculate scales for both width and height constraints
+          const scaleWidth = maxWidth / viewport.width;
+          const scaleHeight = maxHeight / viewport.height;
+          
+          // Use the smaller scale to ensure both dimensions fit
+          const scale = Math.min(scaleWidth, scaleHeight);
+          
+          const scaledViewport = page.getViewport({ scale: scale });
+          
+          canvas.height = scaledViewport.height;
+          canvas.width = scaledViewport.width;
+          
+          // Clear the canvas
+          context.fillStyle = 'white';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          
+          // Render PDF page to canvas
+          const renderContext = {
+            canvasContext: context,
+            viewport: scaledViewport
+          };
+          
+          await page.render(renderContext).promise;
+          
+          setPdfError(false);
+        } catch (error) {
+          console.error('Error rendering PDF:', error);
+          setPdfError(true);
+        }
+      };
+      
+      fileReader.readAsArrayBuffer(file);
+    } catch (error) {
+      console.error('Error loading PDF:', error);
+      setPdfError(true);
+    }
+  };
+
+  // Word document preview component
+  const WordDocumentPreview = () => {
+    if (!selectedFile.isWord || !wordContent) {
+      return null;
+    }
+    
+    return (
+      <div className="word-document-preview" 
+           style={{
+             backgroundColor: 'white',
+             overflow: 'auto',
+             maxHeight: '500px'
+           }}>
+        <div 
+          className="word-content"
+          dangerouslySetInnerHTML={{ __html: wordContent }}
+        />
+      </div>
+    );
+  };
+  
+  // Excel preview component
+  const ExcelPreview = () => {
+    if (!selectedFile.isExcel || !excelContent) {
+      return null;
+    }
+    
+    return (
+      <div className="excel-preview" 
+           style={{
+             backgroundColor: 'white',
+             overflow: 'auto',
+             maxHeight: '500px'
+           }}>
+        <div dangerouslySetInnerHTML={{ __html: excelContent }} />
+      </div>
+    );
+  };
+  
+  // PowerPoint preview component
+  const PowerPointPreview = () => {
+    if (!selectedFile.isPpt) {
+      return null;
+    }
+    
+    return (
+      <div className="powerpoint-preview flex flex-col items-center justify-center h-96">
+        <div className="text-center">
+          <svg className="w-20 h-20 mx-auto text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p className="mt-4 text-lg font-medium">PowerPoint Preview</p>
+          <p className="mt-2 text-sm text-gray-500">PowerPoint files can be printed but cannot be previewed in the browser.</p>
+        </div>
+      </div>
+    );
+  };
+
+  const generatePdfThumbnail = async (file, fileIndex) => {
+    if (!window.pdfjsLib) return;
+    
+    try {
+      const fileReader = new FileReader();
+      
+      fileReader.onload = async function() {
+        try {
+          // Load the PDF document
+          const typedArray = new Uint8Array(this.result);
+          const loadingTask = window.pdfjsLib.getDocument(typedArray);
+          
+          const pdfDoc = await loadingTask.promise;
+          
+          // Always render the first page as thumbnail
+          const page = await pdfDoc.getPage(1);
+          const viewport = page.getViewport({ scale: 1.0 });
+          
+          // Create a new canvas for the thumbnail
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          
+          // Scale down for thumbnail
+          const scale = 100 / viewport.width; // Thumbnail width of 100px
+          const scaledViewport = page.getViewport({ scale });
+          
+          canvas.height = scaledViewport.height;
+          canvas.width = scaledViewport.width;
+          
+          // Render PDF page to canvas
+          const renderContext = {
+            canvasContext: context,
+            viewport: scaledViewport
+          };
+          
+          await page.render(renderContext).promise;
+          
+          // Convert canvas to data URL
+          const thumbnailUrl = canvas.toDataURL('image/png');
+          
+          // Update thumbnails state
+          setPdfThumbnails(prev => ({
+            ...prev,
+            [fileIndex]: thumbnailUrl
+          }));
+        } catch (error) {
+          console.error('Error generating PDF thumbnail:', error);
+        }
+      };
+      
+      fileReader.readAsArrayBuffer(file);
+    } catch (error) {
+      console.error('Error generating PDF thumbnail:', error);
+    }
+  };
+
+  // Function to check file type - updated to include Excel and PowerPoint
+  const getFileType = (fileName) => {
+    const lowerName = fileName.toLowerCase();
+    if (lowerName.endsWith('.pdf')) {
+      return { isPdf: true, isWord: false, isExcel: false, isPpt: false, fileType: 'pdf' };
+    } else if (lowerName.endsWith('.doc') || lowerName.endsWith('.docx')) {
+      return { isPdf: false, isWord: true, isExcel: false, isPpt: false, fileType: 'word' };
+    } else if (lowerName.endsWith('.xls') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.csv')) {
+      return { isPdf: false, isWord: false, isExcel: true, isPpt: false, fileType: 'excel' };
+    } else if (lowerName.endsWith('.ppt') || lowerName.endsWith('.pptx')) {
+      return { isPdf: false, isWord: false, isExcel: false, isPpt: true, fileType: 'powerpoint' };
+    } else {
+      return { isPdf: false, isWord: false, isExcel: false, isPpt: false, fileType: 'image' };
+    }
+  };
+
+  const handleFileChange = (event) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      const newFiles = Array.from(files).map(file => {
+        const { isPdf, isWord, isExcel, isPpt, fileType } = getFileType(file.name);
+        return {
+          name: file.name,
+          preview: isPdf || isWord || isExcel || isPpt ? null : URL.createObjectURL(file),
+          isPdf,
+          isWord,
+          isExcel,
+          isPpt,
+          fileType,
+          file: file
+        };
+      });
+      
+      const updatedFiles = [...selectedFiles, ...newFiles];
+      setSelectedFiles(updatedFiles);
+      
+      // Generate thumbnails for new PDF files
+      if (window.pdfjsLib) {
+        newFiles.forEach((file, i) => {
+          const index = selectedFiles.length + i;
+          if (file.isPdf) {
+            generatePdfThumbnail(file.file, index);
+          }
+        });
+      }
+      
+      // Set the newly added file as the current preview
+      setCurrentPreviewIndex(updatedFiles.length - 1);
+      setSelectedFile(updatedFiles[updatedFiles.length - 1]);
+      setPageNumber(1); // Reset to first page when changing files
+      setPdfError(false); // Reset error state
+      
+      // Process the file based on its type
+      const selectedFile = updatedFiles[updatedFiles.length - 1];
+      if (selectedFile.isWord) {
+        processWordDocument(selectedFile.file);
+        setExcelContent(null);
+      } else if (selectedFile.isExcel) {
+        processExcelDocument(selectedFile.file);
+        setWordContent(null);
+      } else {
+        // Clear content if not a Word or Excel document
+        setWordContent(null);
+        setExcelContent(null);
+      }
+    }
+  };
+
+  const processWordDocument = (file) => {
+    if (!window.mammoth) {
+      console.error('Mammoth.js library not loaded');
+      setWordContent('<p>Error: Mammoth.js library not loaded</p>');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(event) {
+      const arrayBuffer = event.target.result;
+      
+      // Use mammoth.js to convert Word to HTML
+      window.mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
+        .then(function(result) {
+          setWordContent(result.value);
+        })
+        .catch(function(error) {
+          console.error('Error converting Word document:', error);
+          setWordContent('<p>Error: Could not convert Word document</p>');
+        });
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  
+  const processExcelDocument = (file) => {
+    if (!window.XLSX) {
+      console.error('SheetJS library not loaded');
+      setExcelContent('<p>Error: SheetJS library not loaded</p>');
+      return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = function(event) {
+      const data = new Uint8Array(event.target.result);
+      try {
+        // Parse the Excel file
+        const workbook = window.XLSX.read(data, { type: 'array' });
+        
+        // Get the first worksheet
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // Convert to HTML table
+        const html = window.XLSX.utils.sheet_to_html(worksheet);
+        
+        // Add some basic styling to the table
+        const styledHtml = `
+          <div style="font-family: Arial, sans-serif;">
+            <h3 style="margin-bottom: 10px;">${firstSheetName}</h3>
+            <div style="overflow-x: auto;">
+              ${html.replace('<table>', '<table style="border-collapse: collapse; width: 100%;">')
+                   .replace(/<td/g, '<td style="border: 1px solid #ddd; padding: 8px;"')
+                   .replace(/<th/g, '<th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2; text-align: left;"')}
+            </div>
+            ${workbook.SheetNames.length > 1 ? 
+              `<p style="margin-top: 10px; color: #666;">+ ${workbook.SheetNames.length - 1} more sheets (only first sheet shown)</p>` : ''}
+          </div>
+        `;
+        
+        setExcelContent(styledHtml);
+      } catch (error) {
+        console.error('Error processing Excel file:', error);
+        setExcelContent('<p>Error: Could not process Excel file</p>');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const removeFile = (index) => {
+    setSelectedFiles((prevFiles) => {
+      const updatedFiles = prevFiles.filter((_, i) => i !== index);
+      
+      // Update current preview if needed
+      if (index === currentPreviewIndex) {
+        // If we're removing the current preview, switch to the first available file
+        // or use the default if there are no files left
+        if (updatedFiles.length > 0) {
+          setCurrentPreviewIndex(0);
+          setSelectedFile(updatedFiles[0]);
+          setPageNumber(1); // Reset page number
+          
+          // Process file based on type
+          if (updatedFiles[0].isWord) {
+            processWordDocument(updatedFiles[0].file);
+            setExcelContent(null);
+          } else if (updatedFiles[0].isExcel) {
+            processExcelDocument(updatedFiles[0].file);
+            setWordContent(null);
+          } else {
+            setWordContent(null);
+            setExcelContent(null);
+          }
+        } else {
+          setCurrentPreviewIndex(-1);
+          setSelectedFile({
+            name: "No file Selected",
+            preview: "/api/placeholder/400/320",
+            isPdf: false,
+            isWord: false,
+            isExcel: false,
+            isPpt: false,
+            fileType: null
+          });
+          setWordContent(null);
+          setExcelContent(null);
+        }
+      } else if (index < currentPreviewIndex) {
+        // If we're removing a file before the current preview, adjust the index
+        setCurrentPreviewIndex(currentPreviewIndex - 1);
+      }
+      
+      // Update thumbnails state by removing the deleted file and reindexing
+      setPdfThumbnails(prev => {
+        const newThumbnails = {};
+        Object.entries(prev).forEach(([key, value]) => {
+          const keyNum = parseInt(key);
+          if (keyNum !== index) {
+            // Shift indexes for items after the deleted one
+            const newKey = keyNum > index ? keyNum - 1 : keyNum;
+            newThumbnails[newKey] = value;
+          }
+        });
+        return newThumbnails;
+      });
+      
+      return updatedFiles;
+    });
+  };
+
+  const selectFileForPreview = (index) => {
+    setCurrentPreviewIndex(index);
+    setSelectedFile(selectedFiles[index]);
+    setPageNumber(1); // Reset to first page when changing files
+    setPdfError(false); // Reset error state
+    
+    // Process file based on type
+    if (selectedFiles[index].isWord) {
+      processWordDocument(selectedFiles[index].file);
+      setExcelContent(null);
+    } else if (selectedFiles[index].isExcel) {
+      processExcelDocument(selectedFiles[index].file);
+      setWordContent(null);
+    } else {
+      setWordContent(null);
+      setExcelContent(null);
+    }
+  };
+
+  // PDF navigation functions
+  const goToPrevPage = () => {
+    if (pageNumber > 1) {
+      setPageNumber(pageNumber - 1);
+    }
+  };
+
+  const goToNextPage = () => {
+    if (pageNumber < numPages) {
+      setPageNumber(pageNumber + 1);
+    }
+  };
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsMenuOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // Get file icon based on file type
+  const getFileIcon = (fileType) => {
+    switch (fileType) {
+      case 'pdf':
+        return (
+          <svg className="w-8 h-8 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        );
+      case 'word':
+        return (
+          <svg className="w-8 h-8 mx-auto text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        );
+      case 'excel':
+        return (
+          <svg className="w-8 h-8 mx-auto text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+        );
+      case 'powerpoint':
+        return (
+          <svg className="w-8 h-8 mx-auto text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
+        );
+      default:
+        return (
+          <svg className="w-8 h-8 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" />
+          </svg>
+        );
+    }
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-white">
+      {/* Header */}
+      <header className="flex justify-between items-center p-4 bg-white border-b border-gray-200 shadow-sm">
+        <div className="flex items-center">
+          <img src="/api/placeholder/40/28" alt="MyPrintCorner Logo" className="w-10 h-7" />
+          <span className="ml-1 font-medium text-black text-lg">myprintcorner.com</span>
+        </div>
+        <div className="flex items-center">
+          <a href="#" className="text-blue-600 font-medium mr-4">Sign In</a>
+          <div className="relative">
+            <button className="p-1 focus:outline-none" onClick={() => document.getElementById('menuDropdown').classList.toggle('hidden')}>
+              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            
+            <div id="menuDropdown" className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg border border-gray-200 hidden z-10">
+              <ul className="py-1">
+                <li>
+                  <a href="#how-it-works" className="block px-4 py-2 text-gray-800 hover:bg-gray-100">
+                    How it works?
+                  </a>
+                </li>
+                <li>
+                  <a href="#account" className="block px-4 py-2 text-gray-800 hover:bg-gray-100">
+                    Account
+                  </a>
+                </li>
+                <li>
+                  <a href="#feedback" className="block px-4 py-2 text-gray-800 hover:bg-gray-100">
+                    Feedback
+                  </a>
+                </li>
+                <li>
+                  <a href="#contact-us" className="block px-4 py-2 text-gray-800 hover:bg-gray-100">
+                    Contact Us
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex flex-col md:flex-row flex-1 p-4 gap-8">
+        {/* Stepper */}
+        <div className="w-full mb-8">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col items-center">
+              <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm">1</div>
+              <span className="mt-2 text-sm">Upload File</span>
+            </div>
+            <div className="flex-1 h-1 mx-2 bg-blue-200"></div>
+            <div className="flex flex-col items-center">
+              <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm">2</div>
+              <span className="mt-2 text-sm">Print Settings</span>
+            </div>
+            <div className="flex-1 h-1 mx-2 bg-blue-200"></div>
+            <div className="flex flex-col items-center">
+              <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-white text-sm">3</div>
+              <span className="mt-2 text-sm">Select Location</span>
+            </div>
+            <div className="flex-1 h-1 mx-2 bg-blue-200"></div>
+            <div className="flex flex-col items-center">
+              <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-white text-sm">4</div>
+              <span className="mt-2 text-sm">Order Summary</span>
+            </div>
+          </div>
+        </div>
+      </main> 
+
+      <div className="flex flex-col md:flex-row p-4 gap-8">
+        {/* Left Section - File Preview */}
+        <div className="w-full md:w-3/5 lg:w-2/3">
+          <div className="border rounded-lg p-4 bg-white">
+            <h2 className="font-medium mb-4">Selected File</h2>
+            
+            {/* Preview */}
+            <div className="border rounded-md p-4 mb-6 flex flex-col items-center justify-center min-h-96 w-full">
+              {selectedFile.isPdf ? (
+                <div className="w-full flex flex-col items-center">
+                  {pdfError ? (
+                    <div className="text-center text-red-600 p-4">
+                      <p>Error loading PDF. Please check if the file is valid.</p>
+                    </div>
+                  ) : (
+                    <div className="pdf-container w-full flex justify-center">
+                      <canvas ref={canvasRef} className="pdf-canvas border max-w-full"></canvas>
+                    </div>
+                  )}
+                  
+                  {/* PDF Navigation Controls */}
+                  {numPages > 1 && !pdfError && (
+                    <div className="mt-4 flex items-center space-x-4">
+                      <button 
+                        onClick={goToPrevPage} 
+                        disabled={pageNumber <= 1}
+                        className={`px-3 py-1 rounded ${pageNumber <= 1 ? 'bg-gray-200 text-gray-500' : 'bg-blue-600 text-white'}`}
+                      >
+                        Previous
+                      </button>
+                      <p className="text-sm">
+                        Page {pageNumber} of {numPages}
+                      </p>
+                      <button 
+                        onClick={goToNextPage} 
+                        disabled={pageNumber >= numPages}
+                        className={`px-3 py-1 rounded ${pageNumber >= numPages ? 'bg-gray-200 text-gray-500' : 'bg-blue-600 text-white'}`}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : selectedFile.isWord ? (
+                <div className="word-preview w-full">
+                  <div className="word-content" 
+                    style={{
+                      backgroundColor: 'white',
+                      minHeight: '500px',
+                      overflow: 'auto'
+                    }}
+                    dangerouslySetInnerHTML={{ __html: wordContent || '<p>Loading document...</p>' }}>
+                  </div>
+                </div>
+              ) : selectedFile.isExcel ? (
+                <div className="excel-preview w-full">
+                  <div
+                    style={{
+                      backgroundColor: 'white',
+                      minHeight: '500px',
+                      overflow: 'auto'
+                    }}
+                    dangerouslySetInnerHTML={{ __html: excelContent || '<p>Loading spreadsheet...</p>' }}>
+                  </div>
+                </div>
+              ) : selectedFile.isPpt ? (
+                <PowerPointPreview />
+              ) : (
+                <div className="flex justify-center items-center">
+                  <img 
+                    src={selectedFile.preview} 
+                    alt="Print preview" 
+                    className="max-w-full max-h-96 object-contain"
+                  />
+                </div>
+              )}
+            </div>
+            
+            <div className="text-center">
+              <p className="text-gray-700 text-sm">File: {selectedFile.name}</p>
+              {selectedFile.isPdf && numPages && !pdfError && (
+                <p className="text-gray-500 text-xs mt-1">Total Pages: {numPages}</p>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* Right Section - Upload Area */}
+        <div className="w-full md:w-2/5 lg:w-1/3">
+          <div className="border rounded-lg p-4 bg-white h-full flex flex-col justify-between">
+            <div>
+              <h2 className="font-medium mb-4">Upload Files</h2>
+              <p className="text-gray-600 text-sm mb-6">
+                Upload PDF, Word documents, or image files to print.
+              </p>
+              
+              <div className="border-2 border-dashed border-gray-300 rounded-md p-6 text-center">
+                <input
+                  type="file"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="file-upload"
+                  multiple
+                  accept=".pdf,.jpg,.jpeg,.png,.docx,.doc"
+                />
+                <label htmlFor="file-upload" className="cursor-pointer">
+                  <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-3">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                  </div>
+                  <p className="text-blue-600 font-medium">Click to upload</p>
+                  <p className="text-gray-500 text-sm mt-1">or drag and drop</p>
+                  <p className="text-gray-400 text-xs mt-2">PDF, DOC, DOCX, JPG, PNG</p>
+                </label>
+              </div>
+            </div>
+            
+            <div className="mt-auto pt-8">
+              <button className="w-full bg-black text-white py-3 rounded-lg">
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Add More Files Section */}
+      <div className="p-4">
+  <div className="border rounded-lg p-6 bg-white">
+    <h2 className="font-medium mb-4">Your Files</h2>
+    <div className="flex items-center justify-center gap-4">
+      {selectedFiles.length > 0 && (
+        <button className="p-2 bg-gray-200 rounded-full">
+          <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+      )}
+      <div className="flex-1 flex gap-4 overflow-x-auto py-2">
+        {selectedFiles.map((file, index) => (
+          <div 
+            key={index} 
+            className={`relative border-2 rounded-md p-1 cursor-pointer ${index === currentPreviewIndex ? 'border-blue-500' : 'border-gray-300'}`}
+            onClick={() => selectFileForPreview(index)}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                removeFile(index);
+              }}
+              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center"
+            >
+              ✕
+            </button>
+            {file.isPdf ? (
+              pdfThumbnails[index] ? (
+                <img 
+                  src={pdfThumbnails[index]} 
+                  alt={`PDF: ${file.name}`} 
+                  className="w-28 h-40 object-contain bg-gray-50"
+                />
+              ) : (
+                <div className="w-28 h-40 bg-gray-100 flex items-center justify-center">
+                  <div className="text-center">
+                    <svg className="w-8 h-8 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span className="text-sm font-medium mt-1 block">PDF</span>
+                  </div>
+                </div>
+              )
+            ) : file.isWord ? (
+              <div className="w-28 h-40 bg-blue-50 flex items-center justify-center">
+                <div className="text-center">
+                  <svg className="w-8 h-8 mx-auto text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-sm font-medium mt-1 block">Word</span>
+                </div>
+              </div>
+            ) : file.isExcel ? (
+              <div className="w-28 h-40 bg-green-50 flex items-center justify-center">
+                <div className="text-center">
+                  <svg className="w-8 h-8 mx-auto text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-sm font-medium mt-1 block">Excel</span>
+                </div>
+              </div>
+            ) : file.isPowerPoint ? (
+              <div className="w-28 h-40 bg-orange-50 flex items-center justify-center">
+                <div className="text-center">
+                  <svg className="w-8 h-8 mx-auto text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                  </svg>
+                  <span className="text-sm font-medium mt-1 block">PowerPoint</span>
+                </div>
+              </div>
+            ) : (
+              <img src={file.preview} alt={file.name} className="w-28 h-40 object-cover" />
+            )}
+            {index === currentPreviewIndex && (
+              <div className="absolute bottom-1 left-1/2 transform -translate-x-1/2 bg-blue-500 text-white text-xs px-2 py-1 rounded-full">
+                Selected
+              </div>
+            )}
+          </div>
+        ))}
+        <label className="border-2 border-dashed border-gray-300 rounded-md flex-1 min-w-48 flex flex-col items-center justify-center relative cursor-pointer">
+          <input
+            type="file"
+            onChange={handleFileChange}
+            className="absolute opacity-0 w-full h-full cursor-pointer"
+            multiple
+            accept=".pdf,.jpg,.jpeg,.png,.docx,.doc,.xlsx,.xls,.pptx,.ppt"
+          />
+          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-2">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+          </div>
+          <span className="text-blue-600">Add More Files</span>
+        </label>
+      </div>
+      {selectedFiles.length > 0 && (
+        <button className="p-2 bg-gray-200 rounded-full">
+          <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      )}
+    </div>
+  </div>
+</div>
+
+      {/* Bottom Button */}
+      <div className="p-4 flex justify-center mb-8">
+        <button className="bg-black text-white px-6 py-3 rounded-full flex items-center">
+          Proceed to Select Shop
+          <svg className="w-4 h-4 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default App;
