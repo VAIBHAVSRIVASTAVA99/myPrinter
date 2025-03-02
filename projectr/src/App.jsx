@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
-import FileUpload from './components/FileUpload/FileItem';
-import FileUpload from './components/FileUpload/Index';
-import Preview from './components/Preview/ExcelPreview';
-import Preview from './components/Preview/ImagePreview';
-import Preview from './components/Preview/Index';
-import Preview from './components/Preview/PDFPreview';
-import Preview from './components/Preview/PowerPoint';
-import Preview from './components/Preview/WordPreview';
-import useFileHandling from './components/hooks/UseFileHandling';
+import FileUpload from '../components/FileUpload';
+import Preview from '../components/Preview';
+import useFileHandling from '../components/hooks/UseFileHandling';
 import logo from './components/logo.png';
 
 const App = () => {
